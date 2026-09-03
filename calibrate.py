@@ -1,31 +1,29 @@
 """Calibracion interactiva de la camara: pixeles -> mm de la mesa.
 
-La camara de la Falcon2 Pro S es FIJA (no se mueve con el cabezal) y ve toda
-la mesa de una sola foto (con distorsion tipo ojo de pez en los bordes). Por
-eso esta calibracion NO mueve la maquina para nada: es una sola foto, en la
-que marcas varios puntos de referencia cuya posicion real en mm conoces.
+La camara de la Falcon2 Pro S es FIJA (no se mueve) y ve toda la mesa de una
+sola foto (con distorsion tipo ojo de pez en los bordes). No hace falta
+mover la maquina para nada: se calibra marcando con clicks, en UNA sola
+foto, varios puntos cuya posicion real en mm sobre la mesa conozcas
+(medidos con una regla).
 
 Se corre UNA VEZ (o cada vez que se mueva/reenfoque la camara).
 
 Como se usa:
-  1. Cerra Falcon Design Space (la camara no puede estar abierta por dos programas).
-  2. Elegi 6 o mas puntos de referencia, bien distribuidos por toda la imagen
-     (no todos amontonados en el centro), cuya posicion en mm sobre la mesa
-     conozcas con precision. Las opciones mas practicas:
-       a) Puntos de la bandeja/panal que puedas medir con una regla desde el
-          origen (0,0) de la mesa, esquina inferior izquierda (igual que en
-          Falcon Design Space).
-       b) Pedacitos de cinta pegados en distintas posiciones medidas de la
-          bandeja.
-     Cuantos mas puntos marques, y mas repartidos por la imagen (centro Y
-     bordes), mejor le va a la calibracion a la hora de compensar la
-     distorsion de la lente.
-  3. Corre este script. Se abre una ventana con la imagen de la camara.
-  4. Click en cada punto de referencia, EN ORDEN, y cuando te lo pida escribi
-     en la consola las coordenadas en mm de ese punto (X,Y con el origen en
-     la esquina inferior izquierda de la mesa).
-  5. Al terminar (minimo 4 puntos, 'q' para cerrar), se calcula la homografia
-     y se guarda en calibration/camera_calibration.json.
+  1. Cerra Falcon Design Space (la camara no puede estar abierta por dos
+     programas a la vez).
+  2. Antes de correr el script, marca fisicamente 6 o mas puntos sobre la
+     bandeja (pedacitos de cinta, por ejemplo), bien repartidos entre el
+     centro y los bordes de la bandeja -- no todos amontonados en un mismo
+     sector. Con una regla, medi la posicion en mm de cada uno, tomando como
+     origen (0,0) la esquina inferior izquierda de la mesa (la misma que
+     usa Falcon Design Space -- la confirmaste antes en "Origen del laser").
+     Anota esas medidas en un papel antes de arrancar, para no tener que
+     medir con la ventana de la camara abierta.
+  3. Corre este script. Se abre una ventana con la foto de la mesa.
+  4. Click en cada punto de referencia, EN EL ORDEN que anotaste, y cuando
+     te lo pida escribi en la consola las coordenadas en mm de ese punto.
+  5. Al terminar (minimo 4 puntos, 'q' para cerrar), se calcula la
+     homografia y se guarda en calibration/camera_calibration.json.
 """
 from __future__ import annotations
 
@@ -62,7 +60,8 @@ def main() -> int:
     cv2.namedWindow(window)
     cv2.setMouseCallback(window, _on_mouse)
 
-    print("\nHace click en cada punto de referencia sobre la ventana de imagen.")
+    print("\nHace click en cada punto de referencia sobre la ventana de imagen,")
+    print("en el mismo orden en que anotaste sus medidas.")
     print("Apreta 'q' en la ventana cuando hayas marcado todos los puntos (minimo 4,")
     print("recomendado 6 o mas, bien repartidos por la imagen).\n")
 
@@ -90,8 +89,8 @@ def main() -> int:
         return 1
 
     points_mm: list[tuple[float, float]] = []
-    print("\nAhora ingresa la posicion en mm de cada punto marcado (origen: esquina")
-    print("inferior izquierda de la mesa, igual que en Falcon Design Space).\n")
+    print("\nAhora ingresa la posicion en mm de cada punto marcado, en el mismo orden")
+    print("(origen: esquina inferior izquierda de la mesa, igual que en FDS).\n")
     for i, (px, py) in enumerate(_clicked_points):
         while True:
             raw = input(f"Punto {i + 1} (pixel {px:.0f},{py:.0f}) -> mm 'X,Y': ").strip()
@@ -100,7 +99,7 @@ def main() -> int:
                 x_mm, y_mm = float(x_str), float(y_str)
                 break
             except ValueError:
-                print("  Formato invalido. Ejemplo: 0,0  o  400,250.5")
+                print("  Formato invalido. Ejemplo: 0,0  o  200,150.5")
         if not (0 <= x_mm <= cfg.printer.bed_width_mm) or not (
             0 <= y_mm <= cfg.printer.bed_height_mm
         ):
@@ -120,8 +119,8 @@ def main() -> int:
         print(
             "ATENCION: el error es alto (>5mm). Con camaras con mucha distorsion "
             "'ojo de pez' esto puede pasar si los puntos estan muy amontonados o "
-            "muy cerca de los bordes. Repeti la calibracion con mas puntos, bien "
-            "repartidos entre el centro y los bordes de la imagen."
+            "las medidas tienen error. Repeti la calibracion con mas puntos, mejor "
+            "medidos y repartidos entre el centro y los bordes de la imagen."
         )
     return 0
 

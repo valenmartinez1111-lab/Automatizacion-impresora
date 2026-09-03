@@ -145,6 +145,7 @@ class GrblSender:
         movimientos de un trabajo real van todos dentro del G-code generado y
         se mandan con stream(), no con este metodo."""
         self._send_line("M5")  # laser apagado, por las dudas
+        self._send_line("G21")  # unidades mm, explicito (no confiar en el estado modal previo)
         self._send_line("G90")
         self._send_line(f"G0 X{x_mm:.3f} Y{y_mm:.3f} F{feed_mm_min:.0f}")
         self.wait_idle(timeout_s=wait_idle_timeout_s)
@@ -155,10 +156,30 @@ class GrblSender:
         """Igual que move_to_absolute pero relativo a la posicion actual.
         Se usa durante la calibracion de camara (calibrate.py)."""
         self._send_line("M5")
+        self._send_line("G21")
         self._send_line("G91")
         self._send_line(f"G0 X{dx_mm:.3f} Y{dy_mm:.3f} F{feed_mm_min:.0f}")
         self._send_line("G90")
         self.wait_idle(timeout_s=wait_idle_timeout_s)
+
+    def send_raw_and_collect(self, line: str, timeout_s: float = 5.0) -> list[str]:
+        """Manda un comando crudo y devuelve TODAS las lineas de respuesta
+        (a diferencia de _send_line, que descarta todo lo que no sea ok/error).
+        Pensado para diagnostico interactivo (ver console.py), por ejemplo
+        mandar '$$' para listar la configuracion de GRBL."""
+        ser = self._require_connection()
+        ser.reset_input_buffer()
+        ser.write((line + "\n").encode("ascii", errors="replace"))
+        lines: list[str] = []
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            resp = ser.readline().decode(errors="replace").strip()
+            if not resp:
+                continue
+            lines.append(resp)
+            if resp.lower().startswith("ok") or resp.lower().startswith("error"):
+                break
+        return lines
 
     def _send_line(self, line: str) -> None:
         ser = self._require_connection()

@@ -8,22 +8,30 @@ foto, varios puntos cuya posicion real en mm sobre la mesa conozcas
 
 Se corre UNA VEZ (o cada vez que se mueva/reenfoque la camara).
 
+La conversion final combina una interpolacion local entre los puntos que
+marques (mas precisa) con una homografia de respaldo para lo que quede
+fuera del area cubierta por esos puntos. Por eso IMPORTA MUCHO que los
+puntos lleguen hasta las esquinas/bordes reales de la zona donde vas a
+apoyar material -- si el material cae fuera del area cubierta, se usa la
+homografia de respaldo, menos precisa.
+
 Como se usa:
   1. Cerra Falcon Design Space (la camara no puede estar abierta por dos
      programas a la vez).
-  2. Antes de correr el script, marca fisicamente 6 o mas puntos sobre la
-     bandeja (pedacitos de cinta, por ejemplo), bien repartidos entre el
-     centro y los bordes de la bandeja -- no todos amontonados en un mismo
-     sector. Con una regla, medi la posicion en mm de cada uno, tomando como
-     origen (0,0) la esquina inferior izquierda de la mesa (la misma que
-     usa Falcon Design Space -- la confirmaste antes en "Origen del laser").
-     Anota esas medidas en un papel antes de arrancar, para no tener que
-     medir con la ventana de la camara abierta.
+  2. Antes de correr el script, marca fisicamente 9 o mas puntos sobre la
+     bandeja (pedacitos de cinta, por ejemplo). Repartilos para que lleguen
+     bien hasta las 4 esquinas de la zona util de la bandeja (donde vas a
+     apoyar material), no solo el centro -- por ejemplo, una grilla de 3x3
+     cubriendo todo el rectangulo util. Con una regla, medi la posicion en
+     mm de cada uno, tomando como origen (0,0) la esquina inferior izquierda
+     de la mesa (la misma que usa Falcon Design Space -- la confirmaste
+     antes en "Origen del laser"). Anota esas medidas en un papel antes de
+     arrancar, para no tener que medir con la ventana de la camara abierta.
   3. Corre este script. Se abre una ventana con la foto de la mesa.
   4. Click en cada punto de referencia, EN EL ORDEN que anotaste (la ventana
      se cierra sola despues del ultimo punto), y cuando te lo pida escribi
      en la consola las coordenadas en mm de cada uno.
-  5. Se calcula la homografia y se guarda en calibration/camera_calibration.json.
+  5. Se calcula la calibracion y se guarda en calibration/camera_calibration.json.
 """
 from __future__ import annotations
 
@@ -35,7 +43,7 @@ from falcon_batch.calibration import compute_homography, save_calibration
 from falcon_batch.camera import Camera
 from falcon_batch.config import load_config
 
-TARGET_POINTS = 6  # se para solo al llegar a esta cantidad, sin depender de ninguna tecla
+TARGET_POINTS = 9  # se para solo al llegar a esta cantidad, sin depender de ninguna tecla
 
 _clicked_points: list[tuple[float, float]] = []
 

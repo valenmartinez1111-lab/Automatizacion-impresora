@@ -136,32 +136,6 @@ class GrblSender:
         self._require_connection().write(b"\x18")
         time.sleep(1.5)
 
-    def move_to_absolute(
-        self, x_mm: float, y_mm: float, feed_mm_min: float, wait_idle_timeout_s: float = 30.0
-    ) -> None:
-        """Mueve el cabezal (laser apagado) a una posicion absoluta y espera a
-        que termine. Se usa SOLO para posicionar la camara durante el escaneo
-        de deteccion de la plancha (ver grid_scan.py) -- nunca para grabar: los
-        movimientos de un trabajo real van todos dentro del G-code generado y
-        se mandan con stream(), no con este metodo."""
-        self._send_line("M5")  # laser apagado, por las dudas
-        self._send_line("G21")  # unidades mm, explicito (no confiar en el estado modal previo)
-        self._send_line("G90")
-        self._send_line(f"G0 X{x_mm:.3f} Y{y_mm:.3f} F{feed_mm_min:.0f}")
-        self.wait_idle(timeout_s=wait_idle_timeout_s)
-
-    def move_relative(
-        self, dx_mm: float, dy_mm: float, feed_mm_min: float, wait_idle_timeout_s: float = 30.0
-    ) -> None:
-        """Igual que move_to_absolute pero relativo a la posicion actual.
-        Se usa durante la calibracion de camara (calibrate.py)."""
-        self._send_line("M5")
-        self._send_line("G21")
-        self._send_line("G91")
-        self._send_line(f"G0 X{dx_mm:.3f} Y{dy_mm:.3f} F{feed_mm_min:.0f}")
-        self._send_line("G90")
-        self.wait_idle(timeout_s=wait_idle_timeout_s)
-
     def send_raw_and_collect(self, line: str, timeout_s: float = 5.0) -> list[str]:
         """Manda un comando crudo y devuelve TODAS las lineas de respuesta
         (a diferencia de _send_line, que descarta todo lo que no sea ok/error).

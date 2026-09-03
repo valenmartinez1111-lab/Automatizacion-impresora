@@ -29,28 +29,14 @@ camera:
   # Indice de la camara USB tal como la ve OpenCV (0 = primera camara del sistema).
   # Si tenes mas de una camara conectada, probar 0, 1, 2... con list_cameras.py
   device_index: 0
-  capture_width: 1920
-  capture_height: 1080
+  # Si la imagen te sale completamente negra, tu camara probablemente no soporta
+  # esta resolucion (algunas webcams UVC devuelven cuadros negros con OpenCV/DSHOW
+  # si se les pide una resolucion que no manejan). Bajala a 640x480 o 1280x720.
+  capture_width: 1280
+  capture_height: 720
 
   # Archivo generado por calibrate.py la primera vez que calibras la camara.
   calibration_file: "calibration/camera_calibration.json"
-
-# La camara de la Falcon2 esta montada en el cabezal: no ve toda la mesa de
-# una sola foto. El agente la mueve en una grilla para cubrir toda la mesa
-# y "armar" la vista completa antes de detectar la plancha.
-scan:
-  # Margen sin escanear desde el borde de la mesa (mm). Un margen chico
-  # escanea mas mesa (mas posiciones = mas tiempo); no hace falta bajarlo
-  # salvo que tu material se apoye muy cerca del borde.
-  margin_mm: 15.0
-  # Cuanto se solapan los cuadros de camara entre posiciones contiguas
-  # (0.3 = 30%). Mas solape = detecta bordes con mas precision pero tarda
-  # mas (mas posiciones); menos solape = mas rapido pero puede perder un
-  # borde muy fino de la plancha entre dos tomas.
-  overlap_fraction: 0.3
-  # Velocidad de desplazamiento durante el escaneo (mm/min). El laser esta
-  # apagado en todo momento durante este movimiento.
-  travel_feed_mm_min: 3000.0
 
 vision_agent:
   # Modelo de Claude usado para verificar la foto antes de cada trabajo.

@@ -21,19 +21,19 @@ from __future__ import annotations
 
 import datetime
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
+import numpy as np
 
-from .calibration import LocalCalibration, load_calibration
+from .calibration import CameraCalibration, load_calibration
 from .camera import Camera
 from .config import Config
 from .gcode_generator import GCodeGenerationError, build_batch_gcode
 from .grbl_sender import GrblAlarm, GrblError, GrblSender
-from .grid_scan import GridScanner, ScanCell, detect_sheet_from_scans
 from .nesting import NestingError, SignPlacement, plan_grid_nesting
-from .sheet_detector import SheetDetection, SheetDetectionError
+from .sheet_detector import SheetDetection, SheetDetectionError, detect_sheet
 from .sign_layout import SignArtwork, SignLayoutError, build_sign_artwork
 from .text_to_paths import FontRenderer
 from .vision_agent import VerificationResult, verify_sheet
@@ -60,7 +60,7 @@ class JobRecord:
     template: str
     sheet_width_mm: float
     sheet_height_mm: float
-    debug_image_count: int
+    debug_image_path: str | None
     gcode_path: str
     status: str
     detail: str = ""
@@ -95,31 +95,18 @@ class BatchToolbox:
             d.mkdir(parents=True, exist_ok=True)
         self.job_records: list[JobRecord] = []
 
-        self.calibration: LocalCalibration = load_calibration(config.camera.calibration_file)
+        self.calibration: CameraCalibration = load_calibration(config.camera.calibration_file)
         self.camera = Camera(config.camera, snapshot_dir=str(self.photo_dir))
         self.font_renderer = FontRenderer(config.font_path)
         self.anthropic_client = anthropic_client or anthropic.Anthropic()
 
-        # GRBL se conecta SIEMPRE, incluso en dry-run: el escaneo con camara
-        # necesita mover el cabezal (laser apagado en todo momento durante el
-        # escaneo), y eso es seguro de probar de verdad. Lo unico que dry_run
-        # evita es que send_job_to_printer mande G-code real (ver mas abajo).
-        self.grbl = GrblSender(config.printer.serial_port, config.printer.baudrate)
-
-        self.scanner = GridScanner(
-            camera=self.camera,
-            grbl=self.grbl,
-            calibration=self.calibration,
-            bed_width_mm=config.printer.bed_width_mm,
-            bed_height_mm=config.printer.bed_height_mm,
-            travel_feed_mm_min=config.scan.travel_feed_mm_min,
-            margin_mm=config.scan.margin_mm,
-            overlap_fraction=config.scan.overlap_fraction,
-        )
+        self.grbl: GrblSender | None = None
+        if not dry_run:
+            self.grbl = GrblSender(config.printer.serial_port, config.printer.baudrate)
 
         # estado del "trabajo en curso" (una plancha)
-        self._reference_scan: list[ScanCell] | None = None
-        self._current_scan: list[ScanCell] | None = None
+        self._reference_frame: np.ndarray | None = None
+        self._current_frame: np.ndarray | None = None
         self.last_detection: SheetDetection | None = None
         self.last_verification: VerificationResult | None = None
         self._verified_signature: tuple | None = None
@@ -132,16 +119,13 @@ class BatchToolbox:
 
     def connect(self) -> None:
         self.camera.open()
-        self.grbl.connect()
+        if self.grbl is not None:
+            self.grbl.connect()
 
     def close(self) -> None:
         self.camera.close()
-        self.grbl.disconnect()
-
-    def _scan_estimate(self) -> dict:
-        n = len(self.scanner.grid_positions)
-        est_seconds = round(n * 1.3)  # aproximado: mover + asentar + capturar por posicion
-        return {"positions": n, "estimated_seconds": est_seconds}
+        if self.grbl is not None:
+            self.grbl.disconnect()
 
     # -- tools ---------------------------------------------------------------
 
@@ -153,55 +137,43 @@ class BatchToolbox:
         answer = input("[VOS] > ")
         return {"human_response": answer}
 
-    def scan_reference_grid(self) -> dict:
-        """Recorre la mesa VACIA con la camara (grilla de posiciones, laser
-        apagado todo el tiempo) para usar como referencia. Llamar solo
-        despues de confirmar con un humano que la mesa esta realmente vacia."""
-        est = self._scan_estimate()
-        print(
-            f"[INFO] Escaneando mesa vacia: {est['positions']} posiciones, "
-            f"~{est['estimated_seconds'] // 60} min {est['estimated_seconds'] % 60}s estimados..."
-        )
-        cells = self.scanner.scan(label="ref")
-        self._reference_scan = cells
-        self._current_scan = None
+    def capture_reference_photo(self) -> dict:
+        frame, path = self.camera.capture(label="referencia_mesa_vacia")
+        self._reference_frame = frame
+        # cualquier deteccion/verificacion anterior deja de ser valida
         self.last_detection = None
         self._verified_signature = None
-        return {"positions_scanned": len(cells), **est}
+        return {"photo_path": path}
 
-    def scan_current_grid(self) -> dict:
-        """Recorre la mesa CON EL MATERIAL puesto, con la misma grilla que
-        scan_reference_grid. Llamar solo despues de confirmar con un humano
-        que el material ya esta colocado."""
-        if self._reference_scan is None:
+    def capture_current_photo(self) -> dict:
+        if self._reference_frame is None:
             raise ToolError(
-                "Todavia no se escaneo la mesa vacia (scan_reference_grid primero)."
+                "Todavia no se capturo la foto de referencia de la mesa vacia "
+                "(llama a capture_reference_photo primero)."
             )
-        est = self._scan_estimate()
-        print(
-            f"[INFO] Escaneando plancha: {est['positions']} posiciones, "
-            f"~{est['estimated_seconds'] // 60} min {est['estimated_seconds'] % 60}s estimados..."
-        )
-        cells = self.scanner.scan(label="actual")
-        self._current_scan = cells
+        frame, path = self.camera.capture(label="mesa_con_material")
+        self._current_frame = frame
         self.last_detection = None
         self._verified_signature = None
-        return {"positions_scanned": len(cells), **est}
+        return {"photo_path": path}
 
-    def detect_sheet_from_scan(self) -> dict:
-        if self._reference_scan is None or self._current_scan is None:
+    def detect_sheet_on_table(self) -> dict:
+        if self._reference_frame is None or self._current_frame is None:
             raise ToolError(
-                "Faltan escaneos: se necesita scan_reference_grid y scan_current_grid "
-                "antes de detectar la plancha."
+                "Faltan fotos: se necesita capture_reference_photo y "
+                "capture_current_photo antes de detectar la plancha."
             )
+        debug_path = str(
+            self.photo_dir / f"deteccion_{datetime.datetime.now():%Y%m%d_%H%M%S_%f}.jpg"
+        )
         try:
-            detection = detect_sheet_from_scans(
-                self._reference_scan,
-                self._current_scan,
+            detection = detect_sheet(
+                self._reference_frame,
+                self._current_frame,
                 self.calibration,
                 self.config.printer.bed_width_mm,
                 self.config.printer.bed_height_mm,
-                debug_dir=str(self.photo_dir),
+                debug_output_path=debug_path,
             )
         except SheetDetectionError as exc:
             raise ToolError(str(exc)) from exc
@@ -214,18 +186,18 @@ class BatchToolbox:
             "center_mm": [round(c, 1) for c in detection.center_mm],
             "rotation_deg": round(detection.rotation_deg, 1),
             "rectangularity": round(detection.rectangularity, 2),
-            "debug_image_count": len(detection.debug_image_paths or []),
+            "debug_image_path": detection.debug_image_path,
         }
 
     def verify_sheet_with_vision(self) -> dict:
         if self.last_detection is None:
             raise ToolError("No hay ninguna deteccion pendiente de verificar.")
-        if not self.last_detection.debug_image_paths:
-            raise ToolError("La deteccion no genero fotos de depuracion para verificar.")
+        if self.last_detection.debug_image_path is None:
+            raise ToolError("La deteccion no genero imagen de depuracion para verificar.")
 
         result = verify_sheet(
             self.config.vision_agent,
-            self.last_detection.debug_image_paths,
+            self.last_detection.debug_image_path,
             self.last_detection,
             client=self.anthropic_client,
         )
@@ -336,6 +308,7 @@ class BatchToolbox:
         ):
             raise ToolError("La verificacion de vision no corresponde a la deteccion actual.")
 
+        assert self.grbl is not None
         status = self.grbl.get_status()
         if status == "Alarm":
             raise ToolError(
@@ -389,9 +362,15 @@ class BatchToolbox:
         return {"status": "DRY_RUN", "names_sent": names_sent, "still_pending": list(self.pending)}
 
     def get_printer_status(self) -> dict:
+        if self.dry_run:
+            return {"status": "Idle (dry-run)"}
+        assert self.grbl is not None
         return {"status": self.grbl.get_status()}
 
     def emergency_stop(self) -> dict:
+        if self.dry_run:
+            return {"status": "dry-run, nada que frenar"}
+        assert self.grbl is not None
         self.grbl.feed_hold()
         self.grbl.soft_reset()
         return {"status": "Se envio feed-hold + soft reset a la maquina."}
@@ -410,7 +389,7 @@ class BatchToolbox:
             template=self.template.name,
             sheet_width_mm=d.width_mm if d else 0.0,
             sheet_height_mm=d.height_mm if d else 0.0,
-            debug_image_count=len(d.debug_image_paths or []) if d else 0,
+            debug_image_path=d.debug_image_path if d else None,
             gcode_path=getattr(self, "_gcode_job_path", ""),
             status=status,
             detail=detail,

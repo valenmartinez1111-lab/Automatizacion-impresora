@@ -5,12 +5,10 @@ Uso:
   python run_batch.py --names names.csv --template 30x18_2lineas
   python run_batch.py --names names.csv --template 30x15 --dry-run
 
---dry-run SI se conecta a la maquina y SI mueve el cabezal (necesita hacerlo
-para escanear la mesa con la camara -- eso es seguro, el laser esta apagado
-todo ese tiempo). Lo unico que --dry-run evita es mandar el G-code real del
-grabado: send_job_to_printer queda simulado. Sirve para probar la deteccion
-de plancha, la calibracion y el layout de texto contra la maquina real, sin
-gastar material ni prender el laser.
+--dry-run corre todo el flujo (fotos, deteccion, verificacion de vision,
+nesting, generacion de G-code) pero NUNCA se conecta al puerto serie ni prende
+el laser: el "envio" es simulado. Sirve para probar la deteccion de plancha y
+el layout de texto sin gastar material ni arriesgar nada.
 
 Antes de correr esto en serio:
   1. Cerrar Falcon Design Space.
@@ -94,20 +92,17 @@ def main() -> int:
 
     print(f"{len(names)} nombres a procesar con la plantilla '{args.template}'.")
     if args.dry_run:
-        print(
-            "*** MODO DRY-RUN: se conecta a la maquina y mueve el cabezal para escanear "
-            "(laser apagado todo el tiempo), pero NO se manda G-code de grabado real. ***"
-        )
+        print("*** MODO DRY-RUN: no se va a conectar a la maquina ni a prender el laser. ***")
     else:
         print(
             "ATENCION: este proceso va a controlar el laser de la maquina. Asegurate de "
             "estar presente y de poder frenarla en cualquier momento (boton de emergencia "
             "fisico, o Ctrl+C aca)."
         )
-    confirm = input("Escribi 'si' para continuar: ").strip().lower()
-    if confirm != "si":
-        print("Cancelado.")
-        return 0
+        confirm = input("Escribi 'si' para continuar: ").strip().lower()
+        if confirm != "si":
+            print("Cancelado.")
+            return 0
 
     toolbox = BatchToolbox(cfg, names, args.template, dry_run=args.dry_run)
     try:

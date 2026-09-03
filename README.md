@@ -6,20 +6,15 @@ Falcon Design Space en cada cartel.
 
 Como la plancha de material casi nunca coincide con el area de la mesa, y no
 se usan marcadores/stickers, el sistema tiene que "ver" donde quedo apoyada.
-La camara de la Falcon2 esta montada en el cabezal (se mueve con el laser) y
-solo ve una zona chica por vez, no la mesa completa -- asi que en vez de una
-sola foto, el agente:
+La camara de esta Falcon2 es FIJA (no se mueve con el laser) y ve toda la
+mesa de una sola foto, asi que el agente:
 
-1. Mueve el cabezal por una grilla de posiciones que cubre toda la mesa
-   (laser apagado todo el tiempo) y saca una foto en cada parada, con la
-   mesa vacia (referencia).
-2. Repite el mismo recorrido con la plancha de material ya puesta.
-3. Compara parche por parche (misma posicion, antes/despues) y arma, con
-   todos los pixeles que cambiaron en toda la mesa, el rectangulo de la
-   plancha real (no depende del color del material).
-4. Le pide a un modelo de vision (Claude) que revise las fotos de los
-   parches con cambio y confirme que esa deteccion es correcta y segura
-   antes de dejar generar o enviar nada al laser.
+1. Saca una foto de la mesa vacia (referencia).
+2. Saca una foto con la plancha puesta.
+3. Detecta el rectangulo de la plancha por diferencia entre ambas fotos (no
+   depende del color del material).
+4. Le pide a un modelo de vision (Claude) que confirme que esa deteccion es
+   correcta y segura antes de dejar generar o enviar nada al laser.
 5. Genera el texto de cada nombre con la fuente real (Arial), acomoda varios
    carteles en grilla dentro de la plancha detectada, y arma el G-code ya
    rotado/trasladado a la posicion real de la plancha sobre la mesa.
@@ -103,15 +98,6 @@ si tus pruebas dan mejor resultado con otros valores.
 
 ## 4. Calibrar la camara (una sola vez)
 
-La camara de la Falcon2 esta montada en el cabezal, no mira toda la mesa de
-punto fijo -- por eso esta calibracion NO es "click en las 4 esquinas de la
-mesa". Es una calibracion **local**: cuantos mm representa cada pixel
-alrededor de donde este el cabezal en un momento dado. Se mide moviendo la
-maquina una distancia conocida y marcando con un click el mismo punto fisico
-antes y despues de cada movimiento -- no hace falta regla ni patron impreso,
-alcanza con algo reconocible a la vista (un tornillo, una marca, un pedazo
-de cinta pegado en la bandeja).
-
 Con Falcon Design Space **cerrado**:
 
 ```
@@ -119,13 +105,21 @@ python list_cameras.py     # para encontrar el device_index correcto, si hace fa
 python calibrate.py
 ```
 
-`calibrate.py` conecta la maquina y la camara juntas, y te va a ir guiando:
-marca un punto fijo, la maquina se mueve 20mm en X (laser apagado siempre),
-marca el mismo punto de nuevo, vuelve, y repite lo mismo en Y. Al final
-guarda `calibration/camera_calibration.json` e informa el campo de vision
-estimado de la camara en mm -- si ese numero te parece muy raro (mucho mas
-chico o grande de lo que realmente ve la camara), repetila con mas cuidado
-al marcar los puntos.
+`calibrate.py` te va a mostrar la imagen de la camara (probablemente con
+distorsion "ojo de pez" en los bordes, si tu camara es gran angular). Click
+en 6 o mas puntos, bien repartidos entre el centro y los bordes de la
+imagen, cuya posicion en mm sobre la mesa conozcas con precision — las
+opciones mas practicas:
+
+- Puntos de la bandeja/panal que puedas medir con una regla desde el origen
+  (0,0) de la mesa (esquina inferior izquierda, igual que en FDS).
+- Pedacitos de cinta pegados en varias posiciones medidas de la bandeja.
+
+Por cada click, la terminal te va a pedir las coordenadas en mm de ese
+punto. Al final se guarda `calibration/camera_calibration.json` y se informa
+el error de reproyeccion — con una lente sin distorsion deberia ser bajo
+(menos de 1-2mm); con una lente muy gran angular puede ser mas alto, pero si
+da muy alto (mas de 5mm), repeti marcando mas puntos y mejor repartidos.
 
 Repetir esta calibracion si se mueve, reenfoca, o reemplaza la camara.
 
@@ -150,18 +144,15 @@ Maria|Gonzalez
 
 ## 6. Correrlo
 
-Primero en modo `--dry-run`. **Importante:** dry-run SI se conecta a la
-maquina y SI mueve el cabezal para escanear la mesa con la camara (eso es
-seguro: el laser esta apagado en todo momento del escaneo) -- lo unico que
-evita es mandar el G-code real de grabado, que queda simulado:
+Primero en modo simulado (no toca la maquina, no prende el laser):
 
 ```
 python run_batch.py --names names.csv --template 30x15 --dry-run
 ```
 
-Revisa en `logs/photos/` las fotos de cada parche escaneado (con la zona de
-cambio marcada en rojo), y en `logs/gcode/` el G-code que se hubiese
-mandado, antes de confiar en el resultado.
+Revisa en `logs/photos/` las fotos y las detecciones de plancha (con el
+rectangulo superpuesto), y en `logs/gcode/` el G-code generado, antes de
+confiar en el resultado.
 
 Cuando estes conforme, en serio (con Falcon Design Space cerrado):
 
@@ -180,20 +171,20 @@ que entre.
 falcon_batch/
   config.py          # carga y valida config.yaml
   camera.py           # captura de camara USB
-  calibration.py       # calibracion LOCAL pixeles -> mm (camara montada en el cabezal)
-  grid_scan.py          # recorre la mesa en grilla y arma la deteccion de plancha
-  sheet_detector.py      # ajuste de rectangulo + diferencia de fondo por parche
-  vision_agent.py          # verificacion de seguridad con Claude vision
-  text_to_paths.py          # texto -> contornos vectoriales (fuente real)
-  sign_layout.py              # aplica medidas de la plantilla de cartel
-  nesting.py                    # grilla de carteles dentro de la plancha
-  fill.py                        # relleno solido de letras (modo "fill")
-  gcode_generator.py              # arma el G-code final, con limites de mesa
-  grbl_sender.py                    # movimiento + streaming G-code por puerto serie
-  tools.py                            # "tools" del agente + reglas de seguridad
-  batch_agent.py                        # bucle del agente orquestador (Claude tool-use)
-calibrate.py            # calibracion interactiva de camara (2 movimientos + clicks)
+  calibration.py       # homografia pixeles -> mm (multiples puntos, camara fija)
+  sheet_detector.py    # deteccion de plancha por diferencia de fondo
+  vision_agent.py       # verificacion de seguridad con Claude vision
+  text_to_paths.py      # texto -> contornos vectoriales (fuente real)
+  sign_layout.py         # aplica medidas de la plantilla de cartel
+  nesting.py              # grilla de carteles dentro de la plancha
+  fill.py                  # relleno solido de letras (modo "fill")
+  gcode_generator.py        # arma el G-code final, con limites de mesa
+  grbl_sender.py              # streaming del G-code por puerto serie
+  tools.py                     # "tools" del agente + reglas de seguridad
+  batch_agent.py                 # bucle del agente orquestador (Claude tool-use)
+calibrate.py            # calibracion interactiva de camara
 list_cameras.py          # utilitario para encontrar el indice de camara
+console.py                # consola cruda GRBL, para diagnostico
 run_batch.py               # punto de entrada
 config.example.yaml          # plantilla de configuracion
 names.example.csv              # ejemplo de lista de nombres
@@ -201,12 +192,11 @@ names.example.csv              # ejemplo de lista de nombres
 
 ## Limitaciones conocidas / ideas para seguir
 
-- El escaneo con camara puede tardar: mientras mas chico sea el campo de
-  vision real de tu camara comparado con la mesa, mas posiciones necesita la
-  grilla (y mas tarda). El agente te avisa la cantidad de posiciones y el
-  tiempo estimado antes de arrancar cada escaneo. Se puede ajustar en
-  `config.yaml` (`scan.margin_mm`, `scan.overlap_fraction`,
-  `scan.travel_feed_mm_min`) si resulta muy lento.
+- La calibracion usa una homografia (transformacion proyectiva), que no
+  corrige perfectamente una distorsion fuerte de lente "ojo de pez" -- con
+  muchos puntos bien repartidos el resultado es utilizable, pero si tu
+  camara tiene mucha distorsion, la precision puede ser algo peor cerca de
+  los bordes de la imagen que cerca del centro.
 - Un mismo trabajo (`run_batch.py`) procesa nombres con **una sola
   plantilla/tamano de cartel** por corrida — para mezclar tamanos, correr el
   comando varias veces, una por tamano.
@@ -231,16 +221,20 @@ names.example.csv              # ejemplo de lista de nombres
   tiene el puerto COM abierto (FDS, el Monitor Serie de otra herramienta,
   etc.).
 - **La deteccion de plancha falla seguido**: revisa la iluminacion (evitar
-  sombras duras o reflejos fuertes) y que el escaneo de referencia sea
-  realmente de la mesa vacia, sacado con la misma luz que el escaneo actual.
-- **El escaneo tarda demasiado**: bajá `scan.overlap_fraction` en
-  `config.yaml` (menos solape = menos posiciones), o subí
-  `scan.travel_feed_mm_min` si tu maquina puede moverse mas rapido con
-  seguridad.
-- **La calibracion da un campo de vision (FOV) que no tiene sentido**: repetila
-  marcando con mas cuidado el mismo punto fisico exacto en las dos fotos de
-  cada eje (X e Y); un click desplazado unos pixeles ya distorsiona bastante
-  el resultado.
+  sombras duras o reflejos fuertes) y que la foto de referencia sea
+  realmente de la mesa vacia, sacada con la misma luz.
+- **La imagen de la camara sale completamente negra**: baja
+  `camera.capture_width`/`capture_height` en `config.yaml` (probar 640x480 o
+  1280x720) -- algunas camaras UVC devuelven cuadros negros con OpenCV si se
+  les pide una resolucion que no soportan.
+- **El error de reproyeccion de la calibracion da muy alto**: repeti
+  marcando mas puntos, mejor repartidos entre el centro y los bordes de la
+  imagen (no todos amontonados en un mismo sector).
+- **La maquina se mueve menos de lo que se le pide**: revisa con
+  `python console.py` y el comando `$$` los parametros `$100`/`$101`
+  (pasos por mm en X/Y) -- deberian ser los de fabrica de tu maquina; si son
+  muy distintos de lo esperado, puede ser un problema de configuracion de
+  GRBL en si, no de este software.
 - **El texto sale mas chico de lo esperado**: revisa en el log si
   `names_shrunk_to_fit_width` aparece con ese nombre — significa que el
   ancho de texto excedia `max_line_width_mm` de la plantilla y se redujo

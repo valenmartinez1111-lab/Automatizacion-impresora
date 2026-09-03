@@ -1,21 +1,31 @@
-"""Calibracion interactiva de la camara: LOCAL (pixeles -> mm alrededor del
-cabezal), no una homografia de toda la mesa -- la camara de la Falcon2 esta
-montada en el cabezal y se mueve con el, asi que lo que hace falta es saber
-cuantos mm representa cada pixel alrededor del centro de la foto, sea cual
-sea la posicion del cabezal.
+"""Calibracion interactiva de la camara: pixeles -> mm de la mesa.
+
+La camara de la Falcon2 Pro S es FIJA (no se mueve con el cabezal) y ve toda
+la mesa de una sola foto (con distorsion tipo ojo de pez en los bordes). Por
+eso esta calibracion NO mueve la maquina para nada: es una sola foto, en la
+que marcas varios puntos de referencia cuya posicion real en mm conoces.
 
 Se corre UNA VEZ (o cada vez que se mueva/reenfoque la camara).
 
 Como se usa:
-  1. Cerra Falcon Design Space (el puerto serie y la camara no se pueden
-     compartir con otro programa).
-  2. Asegurate de tener algo con un detalle bien visible y fijo dentro del
-     area de trabajo (una marca en la bandeja, un tornillo, un pedacito de
-     cinta pegada) -- no hace falta que sea nada especial, solo algo que
-     puedas reconocer con la vista en dos fotos parecidas.
-  3. Corre este script. La maquina se va a mover un poco (sin encender el
-     laser en ningun momento) y te va a pedir que marques ese mismo punto
-     con un click en varias fotos.
+  1. Cerra Falcon Design Space (la camara no puede estar abierta por dos programas).
+  2. Elegi 6 o mas puntos de referencia, bien distribuidos por toda la imagen
+     (no todos amontonados en el centro), cuya posicion en mm sobre la mesa
+     conozcas con precision. Las opciones mas practicas:
+       a) Puntos de la bandeja/panal que puedas medir con una regla desde el
+          origen (0,0) de la mesa, esquina inferior izquierda (igual que en
+          Falcon Design Space).
+       b) Pedacitos de cinta pegados en distintas posiciones medidas de la
+          bandeja.
+     Cuantos mas puntos marques, y mas repartidos por la imagen (centro Y
+     bordes), mejor le va a la calibracion a la hora de compensar la
+     distorsion de la lente.
+  3. Corre este script. Se abre una ventana con la imagen de la camara.
+  4. Click en cada punto de referencia, EN ORDEN, y cuando te lo pida escribi
+     en la consola las coordenadas en mm de ese punto (X,Y con el origen en
+     la esquina inferior izquierda de la mesa).
+  5. Al terminar (minimo 4 puntos, 'q' para cerrar), se calcula la homografia
+     y se guarda en calibration/camera_calibration.json.
 """
 from __future__ import annotations
 
@@ -23,132 +33,96 @@ import sys
 
 import cv2
 
-from falcon_batch.calibration import compute_local_calibration, save_calibration
+from falcon_batch.calibration import compute_homography, save_calibration
 from falcon_batch.camera import Camera
 from falcon_batch.config import load_config
-from falcon_batch.grbl_sender import GrblAlarm, GrblError, GrblSender
 
-MOVE_MM = 20.0  # distancia de cada movimiento de calibracion
-
-_clicked_point: tuple[float, float] | None = None
+_clicked_points: list[tuple[float, float]] = []
 
 
 def _on_mouse(event, x, y, flags, param):
-    global _clicked_point
     if event == cv2.EVENT_LBUTTONDOWN:
-        _clicked_point = (float(x), float(y))
-
-
-def _ask_click(frame, prompt: str) -> tuple[float, float]:
-    global _clicked_point
-    _clicked_point = None
-    window = "Calibracion"
-    cv2.namedWindow(window)
-    cv2.setMouseCallback(window, _on_mouse)
-    print(f"\n{prompt}")
-    print("(click en la ventana de imagen; 'q' para cancelar todo)")
-    while _clicked_point is None:
-        display = frame.copy()
-        cv2.putText(
-            display, prompt, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2
-        )
-        cv2.imshow(window, display)
-        key = cv2.waitKey(20) & 0xFF
-        if key == ord("q"):
-            cv2.destroyAllWindows()
-            raise SystemExit("Calibracion cancelada por el usuario.")
-    point = _clicked_point
-    cv2.destroyAllWindows()
-    return point
+        _clicked_points.append((float(x), float(y)))
+        print(f"  Punto {len(_clicked_points)} marcado en pixel ({x}, {y})")
 
 
 def main() -> int:
     cfg = load_config()
 
-    print("Conectando camara...")
+    print("Abriendo camara...")
     cam = Camera(cfg.camera)
     cam.open()
-
-    print("Conectando a la maquina por puerto serie...")
-    grbl = GrblSender(cfg.printer.serial_port, cfg.printer.baudrate)
     try:
-        grbl.connect()
-    except Exception as exc:  # noqa: BLE001
-        cam.close()
-        print(f"No se pudo conectar a la maquina: {exc}", file=sys.stderr)
-        return 1
-
-    try:
-        status = grbl.get_status()
-        print(f"Estado de la maquina: {status}")
-        if status == "Alarm":
-            print(
-                "La maquina esta en ALARM. Desbloqueala (o hace home) desde Falcon "
-                "Design Space o la consola de GRBL antes de calibrar, y volve a "
-                "correr este script.",
-                file=sys.stderr,
-            )
-            return 1
-
-        print(
-            "\nLa maquina va a moverse un poco (el laser NO se enciende en ningun "
-            "momento de esta calibracion). Asegurate de que el area de movimiento "
-            "este despejada.\n"
-        )
-        input("Presiona Enter para continuar...")
-
-        frame0, _ = cam.capture(label="calib_0", save=False)
-        p0 = _ask_click(
-            frame0, "Marca con un click un punto fijo y reconocible (tornillo, marca, cinta)."
-        )
-
-        print(f"Moviendo +{MOVE_MM}mm en X...")
-        grbl.move_relative(MOVE_MM, 0.0, cfg.scan.travel_feed_mm_min)
-        frame_x, _ = cam.capture(label="calib_x", save=False)
-        p_after_x = _ask_click(frame_x, "Marca el MISMO punto de antes, en esta nueva foto.")
-
-        print(f"Volviendo -{MOVE_MM}mm en X...")
-        grbl.move_relative(-MOVE_MM, 0.0, cfg.scan.travel_feed_mm_min)
-
-        frame1, _ = cam.capture(label="calib_1", save=False)
-        p1 = _ask_click(frame1, "Marca de nuevo el mismo punto (para el movimiento en Y).")
-
-        print(f"Moviendo +{MOVE_MM}mm en Y...")
-        grbl.move_relative(0.0, MOVE_MM, cfg.scan.travel_feed_mm_min)
-        frame_y, _ = cam.capture(label="calib_y", save=False)
-        p_after_y = _ask_click(frame_y, "Marca el MISMO punto de antes, en esta nueva foto.")
-
-        print(f"Volviendo -{MOVE_MM}mm en Y...")
-        grbl.move_relative(0.0, -MOVE_MM, cfg.scan.travel_feed_mm_min)
-
-    except (GrblError, GrblAlarm) as exc:
-        print(f"\nError de la maquina durante la calibracion: {exc}", file=sys.stderr)
-        return 1
+        frame, _ = cam.capture(label="calibracion", save=False)
     finally:
-        grbl.disconnect()
         cam.close()
 
-    h, w = frame0.shape[:2]
-    cal = compute_local_calibration(
-        point_before_x=p0,
-        point_after_x=p_after_x,
-        dx_mm=MOVE_MM,
-        point_before_y=p1,
-        point_after_y=p_after_y,
-        dy_mm=MOVE_MM,
-        image_width=w,
-        image_height=h,
-    )
+    h, w = frame.shape[:2]
+    window = "Calibracion - click en cada punto de referencia, 'q' para terminar"
+    cv2.namedWindow(window)
+    cv2.setMouseCallback(window, _on_mouse)
+
+    print("\nHace click en cada punto de referencia sobre la ventana de imagen.")
+    print("Apreta 'q' en la ventana cuando hayas marcado todos los puntos (minimo 4,")
+    print("recomendado 6 o mas, bien repartidos por la imagen).\n")
+
+    while True:
+        display = frame.copy()
+        for i, (px, py) in enumerate(_clicked_points):
+            cv2.circle(display, (int(px), int(py)), 6, (0, 0, 255), -1)
+            cv2.putText(
+                display,
+                str(i + 1),
+                (int(px) + 8, int(py) - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+            )
+        cv2.imshow(window, display)
+        key = cv2.waitKey(20) & 0xFF
+        if key == ord("q"):
+            break
+    cv2.destroyAllWindows()
+
+    if len(_clicked_points) < 4:
+        print(f"Se marcaron solo {len(_clicked_points)} puntos. Se necesitan al menos 4. Abortando.")
+        return 1
+
+    points_mm: list[tuple[float, float]] = []
+    print("\nAhora ingresa la posicion en mm de cada punto marcado (origen: esquina")
+    print("inferior izquierda de la mesa, igual que en Falcon Design Space).\n")
+    for i, (px, py) in enumerate(_clicked_points):
+        while True:
+            raw = input(f"Punto {i + 1} (pixel {px:.0f},{py:.0f}) -> mm 'X,Y': ").strip()
+            try:
+                x_str, y_str = raw.split(",")
+                x_mm, y_mm = float(x_str), float(y_str)
+                break
+            except ValueError:
+                print("  Formato invalido. Ejemplo: 0,0  o  400,250.5")
+        if not (0 <= x_mm <= cfg.printer.bed_width_mm) or not (
+            0 <= y_mm <= cfg.printer.bed_height_mm
+        ):
+            print(
+                f"  Aviso: ({x_mm},{y_mm}) esta fuera del area de la mesa "
+                f"configurada ({cfg.printer.bed_width_mm}x{cfg.printer.bed_height_mm}mm). "
+                "Se guarda igual, pero revisa que sea correcto."
+            )
+        points_mm.append((x_mm, y_mm))
+
+    cal = compute_homography(_clicked_points, points_mm, image_width=w, image_height=h)
     save_calibration(cal, cfg.camera.calibration_file)
 
-    fov_w, fov_h = cal.fov_extent_mm()
     print(f"\nCalibracion guardada en '{cfg.camera.calibration_file}'.")
-    print(f"Campo de vision estimado de la camara: {fov_w:.0f} x {fov_h:.0f} mm.")
-    print(
-        "Si ese numero te parece muy distinto de lo que realmente ve la camara "
-        "(mucho mas chico o mas grande), repeti la calibracion marcando los "
-        "puntos con mas cuidado."
-    )
+    print(f"Error de reproyeccion promedio: {cal.reprojection_error_mm:.2f} mm")
+    if cal.reprojection_error_mm > 5.0:
+        print(
+            "ATENCION: el error es alto (>5mm). Con camaras con mucha distorsion "
+            "'ojo de pez' esto puede pasar si los puntos estan muy amontonados o "
+            "muy cerca de los bordes. Repeti la calibracion con mas puntos, bien "
+            "repartidos entre el centro y los bordes de la imagen."
+        )
     return 0
 
 

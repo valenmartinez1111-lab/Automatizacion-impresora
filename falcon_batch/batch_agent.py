@@ -40,30 +40,24 @@ _TOOL_DEFS = [
         },
     },
     {
-        "name": "scan_reference_grid",
+        "name": "capture_reference_photo",
         "description": (
-            "Recorre TODA la mesa con la camara (montada en el cabezal, se mueve "
-            "sola por una grilla de posiciones, laser apagado todo el tiempo) para "
-            "usarla como referencia de 'mesa vacia'. Se DEBE llamar con la mesa "
-            "vacia (confirmado por el humano), antes de colocar el material. Puede "
-            "tardar varios minutos segun cuantas posiciones tenga la grilla."
+            "Saca una foto de referencia de la mesa. Se DEBE llamar con la mesa "
+            "vacia (confirmado por el humano), antes de colocar el material."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "scan_current_grid",
-        "description": (
-            "Igual que scan_reference_grid pero con el material ya puesto sobre la "
-            "mesa. Requiere haber llamado scan_reference_grid antes."
-        ),
+        "name": "capture_current_photo",
+        "description": "Saca una foto de la mesa con el material ya colocado.",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "detect_sheet_from_scan",
+        "name": "detect_sheet_on_table",
         "description": (
-            "Compara el escaneo de referencia con el escaneo actual, parche por "
-            "parche, para detectar el rectangulo de la plancha de material "
-            "(posicion, tamano, rotacion). Requiere haber escaneado ambos antes."
+            "Compara la foto de referencia con la foto actual para detectar el "
+            "rectangulo de la plancha de material (posicion, tamano, rotacion). "
+            "Requiere haber capturado ambas fotos antes."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -71,10 +65,9 @@ _TOOL_DEFS = [
         "name": "verify_sheet_with_vision",
         "description": (
             "Verificacion de seguridad OBLIGATORIA: le pide a un modelo de vision "
-            "que revise las fotos de los parches con cambio y confirme que la "
-            "deteccion geometrica de la plancha es correcta y segura antes de "
-            "generar o enviar ningun G-code. Sin esto aprobado, generate_job_gcode "
-            "y send_job_to_printer van a fallar."
+            "que confirme que la deteccion geometrica de la plancha es correcta y "
+            "segura antes de generar o enviar ningun G-code. Sin esto aprobado, "
+            "generate_job_gcode y send_job_to_printer van a fallar."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
@@ -136,11 +129,10 @@ grabandolos en planchas de material que una persona va colocando sobre la mesa.
 
 Flujo esperado para CADA plancha nueva:
  1. ask_human para confirmar que la mesa esta vacia (o pedir que la vacien).
- 2. scan_reference_grid (mesa vacia; avisale al humano que esto mueve la maquina
-    sola y puede tardar unos minutos, antes de arrancar).
+ 2. capture_reference_photo (mesa vacia).
  3. ask_human para pedir que coloquen la plancha de material.
- 4. scan_current_grid.
- 5. detect_sheet_from_scan.
+ 4. capture_current_photo.
+ 5. detect_sheet_on_table.
  6. verify_sheet_with_vision. Si NO aprueba: usa ask_human para explicar el
     problema (segun 'reason'/'concerns') y pedir que se corrija (acomodar la
     plancha, sacar algo de la mesa, etc.), y volve a intentar desde el paso 3 o 4
@@ -176,9 +168,9 @@ def _dispatch(toolbox: BatchToolbox, name: str, tool_input: dict) -> dict:
     fn = {
         "get_pending_names": toolbox.get_pending_names,
         "ask_human": lambda: toolbox.ask_human(tool_input["question"]),
-        "scan_reference_grid": toolbox.scan_reference_grid,
-        "scan_current_grid": toolbox.scan_current_grid,
-        "detect_sheet_from_scan": toolbox.detect_sheet_from_scan,
+        "capture_reference_photo": toolbox.capture_reference_photo,
+        "capture_current_photo": toolbox.capture_current_photo,
+        "detect_sheet_on_table": toolbox.detect_sheet_on_table,
         "verify_sheet_with_vision": toolbox.verify_sheet_with_vision,
         "plan_nesting_for_pending": toolbox.plan_nesting_for_pending,
         "generate_job_gcode": toolbox.generate_job_gcode,

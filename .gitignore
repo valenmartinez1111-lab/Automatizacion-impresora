@@ -1,0 +1,7 @@
+config.yaml
+calibration/camera_calibration.json
+logs/
+__pycache__/
+*.pyc
+.venv/
+venv/

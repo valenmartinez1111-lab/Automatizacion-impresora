@@ -1,0 +1,106 @@
+# Copia este archivo como config.yaml y completa los valores marcados como OBLIGATORIO.
+# config.yaml esta en .gitignore: es especifico de tu maquina y no se sube al repo.
+
+printer:
+  # OBLIGATORIO: puerto serie de la Falcon2 Pro S.
+  # Se ve en Administrador de dispositivos > Puertos (COM y LPT), con la impresora conectada
+  # y Falcon Design Space CERRADO (el puerto no puede estar abierto por dos programas a la vez).
+  serial_port: "COM3"
+  baudrate: 115200
+
+  # OBLIGATORIO: area de trabajo real de la maquina en mm.
+  # Se ve en Falcon Design Space > Laser > Configuracion del equipo > "Tamano de mesa de trabajo".
+  bed_width_mm: 400.0
+  bed_height_mm: 400.0
+
+  # Origen de coordenadas: la Falcon2 usa (0,0) en la esquina inferior izquierda de la mesa,
+  # con coordenadas absolutas. No cambiar salvo que hayas verificado lo contrario en tu maquina.
+  origin: "bottom_left"
+
+  # Valor maximo del parametro S de potencia del laser (setting $30 de GRBL).
+  # Para confirmarlo: en la consola de FDS (o cualquier terminal serie) enviar "$$" y leer "$30=".
+  # El valor de fabrica de GRBL suele ser 1000.
+  max_laser_s_value: 1000
+
+  # Velocidad maxima de desplazamiento en vacio (mm/min), por seguridad.
+  max_travel_speed_mm_min: 6000
+
+camera:
+  # Indice de la camara USB tal como la ve OpenCV (0 = primera camara del sistema).
+  # Si tenes mas de una camara conectada, probar 0, 1, 2... con calibration/list_cameras.py
+  device_index: 0
+  capture_width: 1920
+  capture_height: 1080
+
+  # Archivo generado por calibrate.py la primera vez que calibras la camara.
+  calibration_file: "calibration/camera_calibration.json"
+
+vision_agent:
+  # Modelo de Claude usado para verificar la foto antes de cada trabajo.
+  model: "claude-sonnet-5"
+  # Confianza minima (0-1) para aprobar automaticamente. Por debajo de esto, el agente
+  # frena y pide confirmacion humana en la consola.
+  min_confidence: 0.75
+
+orchestrator_agent:
+  model: "claude-sonnet-5"
+  max_tool_iterations: 200
+
+font:
+  # Ruta a la fuente real. Por defecto, Arial de Windows.
+  path: "C:/Windows/Fonts/arial.ttf"
+
+# Plantillas de cartel, tomadas de tus especificaciones (Uso de la Creality Falcon2 Pro S).
+sign_templates:
+  "30x15":
+    width_mm: 30.0
+    height_mm: 15.0
+    font_size_pt: 20
+    max_line_width_mm: 27.0
+    text_height_mm: 3.8
+    line_spacing_mm: 5.5
+    max_lines: 1
+
+  "30x18_1linea":
+    width_mm: 30.0
+    height_mm: 18.0
+    font_size_pt: 20
+    max_line_width_mm: 27.0
+    preferred_line_width_mm: 24.0
+    text_height_mm: 3.8
+    line_spacing_mm: 5.5
+    max_lines: 1
+
+  "30x18_2lineas":
+    width_mm: 30.0
+    height_mm: 18.0
+    font_size_pt: 20
+    max_line_width_mm: 27.0
+    preferred_line_width_mm: 24.0
+    # text_height_mm es la altura de mayuscula POR RENGLON (igual que en el resto de
+    # las plantillas). El "9mm" de tu especificacion original para el bloque de 2
+    # renglones es la altura total del bloque (texto + interlineado), que sale sola:
+    # text_height_mm (3.8) + line_spacing_mm (5.5) = 9.3mm =~ 9mm. No es un parametro
+    # que se configure aparte.
+    text_height_mm: 3.8
+    line_spacing_mm: 5.5
+    max_lines: 2
+
+# Parametros de grabado de texto por defecto (modo 22W, "Grabado marcado" segun tu tabla:
+# 1500-2000 mm/min, 20-25%). Ajustalo si tus carteles usan otro material/parametro.
+engrave:
+  mode: "line"          # "line" (contorno) o "fill" (relleno solido de las letras)
+  speed_mm_min: 1750
+  power_percent: 22
+  passes: 1
+  fill_interval_mm: 0.15   # separacion entre lineas de relleno, solo si mode: "fill"
+
+# Layout de multiples carteles nesteados en una sola plancha detectada.
+grid_layout:
+  margin_from_sheet_edge_mm: 5.0
+  spacing_between_signs_mm: 5.0
+
+safety:
+  # Si es true, el agente nunca envia G-code sin una verificacion de vision aprobada
+  # para la plancha actual. No desactivar salvo pruebas controladas sin laser.
+  require_vision_approval: true

@@ -20,10 +20,10 @@ Como se usa:
      Anota esas medidas en un papel antes de arrancar, para no tener que
      medir con la ventana de la camara abierta.
   3. Corre este script. Se abre una ventana con la foto de la mesa.
-  4. Click en cada punto de referencia, EN EL ORDEN que anotaste, y cuando
-     te lo pida escribi en la consola las coordenadas en mm de ese punto.
-  5. Al terminar (minimo 4 puntos, 'q' para cerrar), se calcula la
-     homografia y se guarda en calibration/camera_calibration.json.
+  4. Click en cada punto de referencia, EN EL ORDEN que anotaste (la ventana
+     se cierra sola despues del ultimo punto), y cuando te lo pida escribi
+     en la consola las coordenadas en mm de cada uno.
+  5. Se calcula la homografia y se guarda en calibration/camera_calibration.json.
 """
 from __future__ import annotations
 
@@ -35,13 +35,15 @@ from falcon_batch.calibration import compute_homography, save_calibration
 from falcon_batch.camera import Camera
 from falcon_batch.config import load_config
 
+TARGET_POINTS = 6  # se para solo al llegar a esta cantidad, sin depender de ninguna tecla
+
 _clicked_points: list[tuple[float, float]] = []
 
 
 def _on_mouse(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN:
+    if event == cv2.EVENT_LBUTTONDOWN and len(_clicked_points) < TARGET_POINTS:
         _clicked_points.append((float(x), float(y)))
-        print(f"  Punto {len(_clicked_points)} marcado en pixel ({x}, {y})")
+        print(f"  Punto {len(_clicked_points)}/{TARGET_POINTS} marcado en pixel ({x}, {y})")
 
 
 def main() -> int:
@@ -56,16 +58,15 @@ def main() -> int:
         cam.close()
 
     h, w = frame.shape[:2]
-    window = "Calibracion - click en cada punto de referencia, 'q' para terminar"
+    window = f"Calibracion - marca los {TARGET_POINTS} puntos, en orden"
     cv2.namedWindow(window)
     cv2.setMouseCallback(window, _on_mouse)
 
-    print("\nHace click en cada punto de referencia sobre la ventana de imagen,")
-    print("en el mismo orden en que anotaste sus medidas.")
-    print("Apreta 'q' en la ventana cuando hayas marcado todos los puntos (minimo 4,")
-    print("recomendado 6 o mas, bien repartidos por la imagen).\n")
+    print(f"\nHace click en cada uno de los {TARGET_POINTS} puntos de referencia sobre la")
+    print("ventana de imagen, en el mismo orden en que anotaste sus medidas.")
+    print(f"La ventana se cierra sola apenas marques los {TARGET_POINTS} puntos.\n")
 
-    while True:
+    while len(_clicked_points) < TARGET_POINTS:
         display = frame.copy()
         for i, (px, py) in enumerate(_clicked_points):
             cv2.circle(display, (int(px), int(py)), 6, (0, 0, 255), -1)
@@ -79,9 +80,7 @@ def main() -> int:
                 2,
             )
         cv2.imshow(window, display)
-        key = cv2.waitKey(20) & 0xFF
-        if key == ord("q"):
-            break
+        cv2.waitKey(20)
     cv2.destroyAllWindows()
 
     if len(_clicked_points) < 4:

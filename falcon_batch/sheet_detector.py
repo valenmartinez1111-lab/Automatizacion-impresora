@@ -59,17 +59,23 @@ def _order_points(pts: np.ndarray) -> np.ndarray:
 
 def compute_changed_mask(reference_bgr: np.ndarray, current_bgr: np.ndarray) -> np.ndarray:
     """Mascara binaria (255 = cambio) entre dos fotos del mismo encuadre,
-    por diferencia de fondo + umbral de Otsu + limpieza morfologica."""
+    por diferencia de fondo + umbral de Otsu + limpieza morfologica.
+
+    La diferencia se calcula POR COLOR (maximo de la diferencia entre los
+    tres canales B/G/R), no convirtiendo antes a escala de grises. Esto
+    importa con luz ambiente de color (por ejemplo una luz roja): dos
+    superficies pueden verse casi con el mismo brillo en escala de grises
+    bajo esa luz, aunque tengan un color bien distinto -- comparando por
+    canal se sigue notando la diferencia."""
     if reference_bgr.shape != current_bgr.shape:
         current_bgr = cv2.resize(current_bgr, (reference_bgr.shape[1], reference_bgr.shape[0]))
 
-    ref_gray = cv2.cvtColor(reference_bgr, cv2.COLOR_BGR2GRAY)
-    cur_gray = cv2.cvtColor(current_bgr, cv2.COLOR_BGR2GRAY)
-    ref_gray = cv2.GaussianBlur(ref_gray, (5, 5), 0)
-    cur_gray = cv2.GaussianBlur(cur_gray, (5, 5), 0)
+    ref_blur = cv2.GaussianBlur(reference_bgr, (5, 5), 0)
+    cur_blur = cv2.GaussianBlur(current_bgr, (5, 5), 0)
 
-    diff = cv2.absdiff(ref_gray, cur_gray)
-    _, mask = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    diff = cv2.absdiff(ref_blur, cur_blur)
+    diff_max = np.max(diff, axis=2).astype(np.uint8)
+    _, mask = cv2.threshold(diff_max, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)

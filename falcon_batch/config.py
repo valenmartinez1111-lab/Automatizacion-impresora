@@ -41,6 +41,16 @@ class CameraConfig:
 
 
 @dataclass
+class ScanConfig:
+    """Como el agente barre la mesa con la camara (montada en el cabezal)
+    para 'ver' toda la plancha, ya que una sola foto no alcanza."""
+
+    margin_mm: float
+    overlap_fraction: float
+    travel_feed_mm_min: float
+
+
+@dataclass
 class VisionAgentConfig:
     model: str
     min_confidence: float
@@ -89,6 +99,7 @@ class SafetyConfig:
 class Config:
     printer: PrinterConfig
     camera: CameraConfig
+    scan: ScanConfig
     vision_agent: VisionAgentConfig
     orchestrator_agent: OrchestratorAgentConfig
     font_path: str
@@ -141,6 +152,13 @@ def load_config(path: str | None = None) -> Config:
         calibration_file=camera_raw.get(
             "calibration_file", "calibration/camera_calibration.json"
         ),
+    )
+
+    scan_raw = raw.get("scan", {})
+    scan = ScanConfig(
+        margin_mm=float(scan_raw.get("margin_mm", 15.0)),
+        overlap_fraction=float(scan_raw.get("overlap_fraction", 0.3)),
+        travel_feed_mm_min=float(scan_raw.get("travel_feed_mm_min", 3000.0)),
     )
 
     va_raw = raw.get("vision_agent", {})
@@ -203,6 +221,7 @@ def load_config(path: str | None = None) -> Config:
     return Config(
         printer=printer,
         camera=camera,
+        scan=scan,
         vision_agent=vision_agent,
         orchestrator_agent=orchestrator_agent,
         font_path=font_path,

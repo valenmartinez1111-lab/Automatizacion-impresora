@@ -19,6 +19,9 @@ from dataclasses import dataclass
 import serial
 
 STATUS_RE = re.compile(r"<(\w+)[,|]")
+FULL_STATUS_RE = re.compile(
+    r"<(\w+)[,|].*?MPos:(-?\d+\.?\d*),(-?\d+\.?\d*),(-?\d+\.?\d*)"
+)
 
 WAKE_TIMEOUT_S = 5.0
 LINE_TIMEOUT_S = 30.0
@@ -73,8 +76,9 @@ class GrblSender:
             raise GrblError("No hay conexion serie abierta. Llama a connect() primero.")
         return self._ser
 
-    def get_status(self) -> str:
-        """Consulta el estado actual (Idle, Run, Hold, Alarm, ...) via '?'."""
+    def get_full_status(self) -> dict:
+        """Consulta el estado actual via '?': estado (Idle/Run/Alarm/...) y,
+        si la respuesta la incluye, la posicion absoluta de la maquina (MPos)."""
         ser = self._require_connection()
         ser.reset_input_buffer()
         ser.write(b"?")
@@ -83,10 +87,31 @@ class GrblSender:
             line = ser.readline().decode(errors="replace").strip()
             if not line:
                 continue
-            m = STATUS_RE.search(line)
+            m = FULL_STATUS_RE.search(line)
             if m:
-                return m.group(1)
+                return {
+                    "state": m.group(1),
+                    "mpos": (float(m.group(2)), float(m.group(3)), float(m.group(4))),
+                }
+            m2 = STATUS_RE.search(line)
+            if m2:
+                return {"state": m2.group(1), "mpos": None}
         raise GrblError("La maquina no respondio al pedido de estado ('?').")
+
+    def get_status(self) -> str:
+        """Consulta solo el estado actual (Idle, Run, Hold, Alarm, ...) via '?'."""
+        return self.get_full_status()["state"]
+
+    def get_position_mm(self) -> tuple[float, float]:
+        """Posicion absoluta actual del cabezal (X, Y) en mm, segun GRBL (MPos)."""
+        status = self.get_full_status()
+        if status["mpos"] is None:
+            raise GrblError(
+                "La maquina no devolvio posicion (MPos) en su estado. "
+                "Revisa el firmware/configuracion de reportes de GRBL ($10)."
+            )
+        x, y, _z = status["mpos"]
+        return (x, y)
 
     def wait_idle(self, timeout_s: float = 120.0) -> None:
         deadline = time.time() + timeout_s
@@ -110,6 +135,30 @@ class GrblSender:
         """Reset por software (Ctrl-X / 0x18). Detiene el trabajo en curso."""
         self._require_connection().write(b"\x18")
         time.sleep(1.5)
+
+    def move_to_absolute(
+        self, x_mm: float, y_mm: float, feed_mm_min: float, wait_idle_timeout_s: float = 30.0
+    ) -> None:
+        """Mueve el cabezal (laser apagado) a una posicion absoluta y espera a
+        que termine. Se usa SOLO para posicionar la camara durante el escaneo
+        de deteccion de la plancha (ver grid_scan.py) -- nunca para grabar: los
+        movimientos de un trabajo real van todos dentro del G-code generado y
+        se mandan con stream(), no con este metodo."""
+        self._send_line("M5")  # laser apagado, por las dudas
+        self._send_line("G90")
+        self._send_line(f"G0 X{x_mm:.3f} Y{y_mm:.3f} F{feed_mm_min:.0f}")
+        self.wait_idle(timeout_s=wait_idle_timeout_s)
+
+    def move_relative(
+        self, dx_mm: float, dy_mm: float, feed_mm_min: float, wait_idle_timeout_s: float = 30.0
+    ) -> None:
+        """Igual que move_to_absolute pero relativo a la posicion actual.
+        Se usa durante la calibracion de camara (calibrate.py)."""
+        self._send_line("M5")
+        self._send_line("G91")
+        self._send_line(f"G0 X{dx_mm:.3f} Y{dy_mm:.3f} F{feed_mm_min:.0f}")
+        self._send_line("G90")
+        self.wait_idle(timeout_s=wait_idle_timeout_s)
 
     def _send_line(self, line: str) -> None:
         ser = self._require_connection()
